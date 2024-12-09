@@ -183,12 +183,23 @@ class BluetoothService : Service() {
     }
 
     private fun publishScannedDevices(identificador: String) {
+        val sharedPreferences = getSharedPreferences("ConfigPrefs", Context.MODE_PRIVATE)
+        val rssiThreshold = sharedPreferences.getString("RSSI", "-100")?.toIntOrNull() ?: -100
+
         synchronized(scannedDevices) {
             if (scannedDevices.isNotEmpty()) {
-                val message = formatScannedDevicesMessage(scannedDevices.toList(), identificador)
-                val topic = "/gw/scanpub/$identificador"
+                // Filtrar dispositivos basados en el RSSI
+                val filteredDevices = scannedDevices.filter { deviceInfo ->
+                    val (_, _, rssi) = parseDeviceInfo(deviceInfo)
+                    rssi >= rssiThreshold // Solo incluir dispositivos con RSSI mayor o igual al umbral
+                }
 
-                publishToMqtt(topic, message)
+                if (filteredDevices.isNotEmpty()) {
+                    val message = formatScannedDevicesMessage(filteredDevices, identificador)
+                    val topic = "/gw/scanpub/$identificador"
+
+                    publishToMqtt(topic, message)
+                }
 
                 scannedDevices.clear()
             }
