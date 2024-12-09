@@ -18,11 +18,17 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.google.gson.Gson
 import com.sysnet.ebeaconsgateway.R
 import org.eclipse.paho.client.mqttv3.MqttClient
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttException
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
+import android.os.PowerManager
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 class BluetoothService : Service() {
     private val TAG = "BluetoothService"
@@ -32,6 +38,7 @@ class BluetoothService : Service() {
     private lateinit var bluetoothLeScanner: BluetoothLeScanner
     private val scannedDevices = mutableSetOf<String>()
     private var isScanning = false
+    private lateinit var wakeLock: PowerManager.WakeLock
 
     companion object {
         private const val CHANNEL_ID = "ForegroundServiceChannel"
@@ -41,6 +48,10 @@ class BluetoothService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$TAG::WakeLock")
+        wakeLock.acquire()
     }
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -72,6 +83,9 @@ class BluetoothService : Service() {
         handler.removeCallbacks(runnable)
         disconnectMqttBroker()
         super.onDestroy()
+        if (wakeLock.isHeld) {
+            wakeLock.release()
+        }
     }
 
     private fun connectToMqttBroker() {
@@ -113,10 +127,8 @@ class BluetoothService : Service() {
 
         bluetoothLeScanner = bluetoothAdapter.bluetoothLeScanner
 
-        // Start continuous scanning
         startContinuousScanning()
 
-        // Setup periodic MQTT publishing
         runnable = object : Runnable {
             override fun run() {
                 publishScannedDevices(identificador)
@@ -173,18 +185,65 @@ class BluetoothService : Service() {
     private fun publishScannedDevices(identificador: String) {
         synchronized(scannedDevices) {
             if (scannedDevices.isNotEmpty()) {
-                val formattedMessage = formatBluetoothDevices(scannedDevices.toList())
+                val message = formatScannedDevicesMessage(scannedDevices.toList(), identificador)
                 val topic = "/gw/scanpub/$identificador"
 
-                //Log.w(TAG, "--------------------------------------")
-                //Log.w(TAG, formattedMessage)
+                publishToMqtt(topic, message)
 
-                publishToMqtt(topic, formattedMessage)
-
-                // Optional: Clear devices after publishing
                 scannedDevices.clear()
             }
         }
+    }
+
+    private fun formatScannedDevicesMessage(devices: List<String>, identificador: String): String {
+        val timeStamp = getIso8601Timestamp()
+        val gatewayMac = identificador
+        val message = mutableListOf<Map<String, Any>>()
+
+        // Mensaje inicial con detalles generales
+        message.add(
+            mapOf(
+                "TimeStamp" to timeStamp,
+                "Format" to "Movil",
+                "GatewayMAC" to gatewayMac
+            )
+        )
+
+        // Agregar información de los dispositivos escaneados
+        devices.forEach { deviceInfo ->
+            val (name, address, rssi) = parseDeviceInfo(deviceInfo)
+            message.add(
+                mapOf(
+                    "TimeStamp" to timeStamp,
+                    "Format" to "RawData",
+                    "BLEMAC" to formatMacAddress(address),
+                    "RSSI" to rssi,
+                    "AdvType" to "Legacy-res",
+                    "BLEName" to name,
+                    "RawData" to "181600EA00000010003CFFE0015C0058000BEEECE20D4A2FB8020A00"
+                )
+            )
+        }
+        return Gson().toJson(message)
+    }
+
+    private fun getIso8601Timestamp(): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+        return sdf.format(Date())
+    }
+
+    private fun formatMacAddress(macAddress: String): String {
+        return macAddress.replace(":", "")
+    }
+
+    private fun parseDeviceInfo(deviceInfo: String): Triple<String, String, Int> {
+        // Asumimos que el formato es "Nombre - Dirección - RSSI: ValorRSSI"
+        val parts = deviceInfo.split(" - ")
+        val name = parts.getOrNull(0) ?: "Unknown"
+        val address = parts.getOrNull(1) ?: "00:00:00:00:00:00"
+        val rssi = parts.getOrNull(2)?.replace("RSSI: ", "")?.toIntOrNull() ?: 0
+        return Triple(name, address, rssi)
     }
 
     private fun publishToMqtt(topic: String, message: String) {
@@ -194,10 +253,6 @@ class BluetoothService : Service() {
         } catch (e: MqttException) {
             Log.e(TAG, "Error publishing message: ${e.message}")
         }
-    }
-
-    private fun formatBluetoothDevices(devices: List<String>): String {
-        return devices.joinToString("\n") { it }
     }
 
     private fun createNotificationChannel() {
@@ -215,7 +270,7 @@ class BluetoothService : Service() {
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Servicio de eBeacons")
-            .setContentText("El escaneo Bluetooth ejecutandose")
+            .setContentText("El escaneo Bluetooth está ejecutándose")
             .setSmallIcon(R.drawable.baseline_settings_input_antenna_24)
             .build()
     }

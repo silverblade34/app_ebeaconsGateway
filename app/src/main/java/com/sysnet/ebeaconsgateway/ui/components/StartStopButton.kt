@@ -1,8 +1,13 @@
 package com.sysnet.ebeaconsgateway.ui.components
 
+import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -26,6 +32,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.sysnet.ebeaconsgateway.R
 import com.sysnet.ebeaconsgateway.data.service.BluetoothService
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +47,7 @@ fun StartStopButton(
     // Estado para controlar si el servicio está iniciado
     val sharedPreferences = context.getSharedPreferences("ConfigPrefs", Context.MODE_PRIVATE)
     val isServiceRunning = remember { mutableStateOf(sharedPreferences.getBoolean("ServiceRunning", false)) }
+    val showDialog = remember { mutableStateOf(false) } // Estado para el diálogo de inicialización
 
     Button(
         onClick = {
@@ -48,26 +56,40 @@ fun StartStopButton(
             val identificador = sharedPreferences.getString("Identificador", "") ?: ""
 
             if (rssi.isNotEmpty() && intervalo.isNotEmpty() && identificador.isNotEmpty()) {
-                if (!isServiceRunning.value) {
-                    // Iniciar el servicio
-                    val intent = Intent(context, BluetoothService::class.java)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(intent)
-                    } else {
-                        context.startService(intent)
-                    }
-
-                    // Guardar el estado como iniciado
-                    sharedPreferences.edit().putBoolean("ServiceRunning", true).apply()
-                    isServiceRunning.value = true
+                val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+                if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
+                    // Mostrar Toast si Bluetooth no está activado
+                    Toast.makeText(context, "Debe activar el Bluetooth", Toast.LENGTH_SHORT).show()
                 } else {
-                    // Detener el servicio
-                    val intent = Intent(context, BluetoothService::class.java)
-                    context.stopService(intent)
+                    if (!isServiceRunning.value) {
+                        // Iniciar el servicio
+                        val intent = Intent(context, BluetoothService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            context.startForegroundService(intent)
+                        } else {
+                            context.startService(intent)
+                        }
 
-                    // Guardar el estado como detenido
-                    sharedPreferences.edit().putBoolean("ServiceRunning", false).apply()
-                    isServiceRunning.value = false
+                        // Mostrar diálogo de inicialización
+                        showDialog.value = true
+                        coroutineScope.launch {
+                            // Simular inicialización con un retraso de 4 segundos
+                            kotlinx.coroutines.delay(6000)
+                            showDialog.value = false
+
+                            // Guardar el estado como iniciado
+                            sharedPreferences.edit().putBoolean("ServiceRunning", true).apply()
+                            isServiceRunning.value = true
+                        }
+                    } else {
+                        // Detener el servicio
+                        val intent = Intent(context, BluetoothService::class.java)
+                        context.stopService(intent)
+
+                        // Guardar el estado como detenido
+                        sharedPreferences.edit().putBoolean("ServiceRunning", false).apply()
+                        isServiceRunning.value = false
+                    }
                 }
             } else {
                 // Mostrar Snackbar si no está configurado
@@ -82,12 +104,7 @@ fun StartStopButton(
         modifier = Modifier
             .fillMaxWidth(0.8f)
             .height(56.dp),
-        shape = RoundedCornerShape(
-            topStart = 16.dp,
-            topEnd = 16.dp,
-            bottomStart = 16.dp,
-            bottomEnd = 16.dp
-        ),
+        shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = if (isServiceRunning.value) Color.Red else Color(0xFF438ADE),
             contentColor = Color.White
@@ -100,7 +117,7 @@ fun StartStopButton(
                 ),
                 contentDescription = if (isServiceRunning.value) "Detener" else "Iniciar",
                 modifier = Modifier.size(30.dp),
-                tint = Color.Unspecified // Esto asegura que se use el color original del drawable
+                tint = Color.Unspecified
             )
 
             Spacer(modifier = Modifier.width(8.dp))
@@ -111,4 +128,28 @@ fun StartStopButton(
             )
         }
     }
+
+    // Mostrar diálogo de inicialización
+    if (showDialog.value) {
+        Dialog(onDismissRequest = { }) {
+            Box(
+                modifier = Modifier
+                    .size(150.dp) // Tamaño reducido del diálogo
+                    .background(Color.White, shape = RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Color(0xFF438ADE)) // Azul oscuro
+                    Spacer(modifier = Modifier.height(12.dp)) // Espaciado más compacto
+                    Text(
+                        text = "Inicializando...",
+                        fontSize = 14.sp, // Tamaño ligeramente más pequeño
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF002366) // Azul oscuro profundo
+                    )
+                }
+            }
+        }
+    }
+
 }

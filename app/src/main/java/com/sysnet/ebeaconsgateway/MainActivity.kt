@@ -1,7 +1,13 @@
 package com.sysnet.ebeaconsgateway
 
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -20,13 +26,31 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         checkAndRequestPermissions()
-
+        disableBatteryOptimizations(this)
         setContent {
             EbeaconsGatewayTheme {
                 SplashScreen()
             }
         }
     }
+
+    private fun disableBatteryOptimizations(context: Context) {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+            AlertDialog.Builder(this)
+                .setTitle("Optimización de batería")
+                .setMessage("Para que el servicio funcione correctamente, es necesario desactivar las optimizaciones de batería.")
+                .setPositiveButton("Aceptar") { _, _ ->
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                    }
+                    context.startActivity(intent)
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
+        }
+    }
+
 
     private fun checkAndRequestPermissions() {
         val permissionsToRequest = PermissionUtils.checkAndRequestBluetoothPermissions(this)
